@@ -1,0 +1,55 @@
+name: seal-build
+
+# Upstream fflate ships no GitHub Actions CI; this workflow mirrors the
+# project's own package.json scripts: build:lib (the only part of `build`
+# whose output ships) + the uvu test suite, then npm pack.
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "uvu test file pattern (empty = full suite)"
+        required: false
+        default: ""
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 16.16.0 / npm 8.11.0 packed the public 0.7.4 tarball
+          node-version: "16.16.0"
+      - name: Toolchain
+        run: |
+          npm install -g yarn@1.22.19
+          node --version
+          npm --version
+          yarn --version
+      - name: Install
+        run: yarn install --frozen-lockfile
+      - name: Build
+        run: yarn build:lib
+      - name: Test
+        env:
+          TEST_FILTER: ${{ inputs.test-filter }}
+          # gutenberg.org now chains to SSL.com TLS RSA Root CA 2022, which
+          # Node 16.16.0's bundled CA store predates; trust the runner's store
+          NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          if [ -n "$TEST_FILTER" ]; then
+            TS_NODE_PROJECT=test/tsconfig.json yarn uvu -b -r ts-node/register test "$TEST_FILTER"
+          else
+            yarn test
+          fi
+      - name: Pack
+        # prepack re-runs the full build (docs + parcel demo, whose cpGHPages
+        # step commits to a gh-pages branch) and the test suite. npm 8.11.0
+        # runs prepack despite --ignore-scripts; npm 9 honours the flag.
+        run: npx -y npm@9.8.1 pack --ignore-scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fflate-tgz
+          path: fflate-0.7.4.tgz
+          if-no-files-found: error
